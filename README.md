@@ -4,6 +4,54 @@ This script migrates files uploaded to [RocketChat](https://rocket.chat/) from t
 
     migrate -c [command] -d [s3 bucket|output directory] -r [dbname] -t [target]
 
+### EGroupware GmbH fork
+
+This is a fork of [arminfelder/gridfsmigrate](https://github.com/arminfelder/gridfsmigrate) (GPLv3, as the original) for our
+Rocket.Chat instances (Rocket.Chat 8.x, MongoDB 8, S3 on IONOS). Branch `egroupware` contains the changes:
+
+* **S3 compatible services**: `--s3-endpoint-url`, `--s3-region`, `--s3-path-style` (the original only talks to AWS), optional `--s3-key-prefix`;
+  credentials as usual for boto3 (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
+* **MongoDB**: `--mongo-uri` (replica set, `authSource`) or `--user` / `--auth-source`, password from `MONGO_PASSWORD`
+* **FileSystem source**: `--source filesystem --source-dir /app/uploads` migrates the files of Rocket.Chat's FileSystem store
+  (flat directory, file name = `_id`) to S3, not only GridFS
+* **Streaming copies**: no whole file in memory; every copy is verified (size in the target against the bytes read)
+* **Resumable**: the log (`-l`, default `migrate_<database>.csv`) is written after every file, a repeated `dump` skips what is in the
+  log and accepts an identical object that already exists in the target
+* **Failures are reported as failures**: a failed copy is no longer logged as success, a document without a file in GridFS is reported
+  as `missing` (and does not stop the run); the exit code is 1 if copies failed
+* **`dump --dry-run`** and `--limit N` for a first try, new command **`verify`**
+* **`updatedb` and `removeblobs` verify before they change anything**: `updatedb` only points an upload to the target if the copy
+  exists with the right size, `removeblobs` only deletes the GridFS file of an upload that `updatedb` already moved and whose copy is
+  verified (`--skip-verify` switches the check off). `updatedb` is idempotent.
+* **Key layout of Rocket.Chat 8**: `<uniqueID>/uploads/<rid>/<userId>/<fileId>` (lower case `uploads`), and `updatedb` keeps the
+  `path` and `url` of an upload (host, prefix and file name) and only replaces the store name in them. Rocket.Chat reads S3 files by the
+  key stored in `AmazonS3.path` and the store name `AmazonS3:Uploads`.
+* `gridfs` is not in `requirements.txt` any more: that is an unrelated package on PyPI, GridFS is part of `pymongo`
+
+#### Example: GridFS to an S3 bucket of an instance
+
+Make a backup of the database first (`mongodump`). Then:
+
+    export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... MONGO_PASSWORD=...
+    S3="-t AmazonS3 -d <bucket> --s3-endpoint-url https://s3.eu-central-3.ionoscloud.com --s3-region eu-central-3"
+    DB="--mongo-uri mongodb://<host>:27017/?replicaSet=rs0 --user <user> --auth-source admin -r <database>"
+    ./migrate.py -c dump $DB $S3 --dry-run            # what would be copied
+    ./migrate.py -c dump $DB $S3 --limit 20           # first try, repeat the same command without --limit later
+    ./migrate.py -c dump $DB $S3                      # resumable, run it again after an error
+    ./migrate.py -c verify $DB $S3
+    # configure the instance for S3 (settings FileUpload_S3_Bucket, FileUpload_S3_BucketURL, FileUpload_S3_Region,
+    # FileUpload_S3_ForcePathStyle, FileUpload_S3_AWSAccessKeyId, FileUpload_S3_AWSSecretAccessKey), then:
+    ./migrate.py -c updatedb $DB $S3
+    # check downloads of old attachments in Rocket.Chat, and only then, maybe much later:
+    ./migrate.py -c removeblobs $DB $S3
+
+#### Tests
+
+    python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+    .venv/bin/python -m pytest tests
+
+The tests use mongomock and a mocked S3 (moto), GridFS itself is not covered by them.
+
 ### Help
 
 Run `./migrate.py -h` to see all available options.
@@ -26,7 +74,7 @@ Run `./migrate.py -h` to see all available options.
 
   Or manually:
 
-      pip install pymongo gridfs tqdm boto3
+      pip install pymongo tqdm boto3
 
 #### Environment
 

@@ -146,6 +146,7 @@ class FileSystemSource:
             raise ValueError(f"Source directory does not exist: {directory}")
         self.store = f"{self.kind}:{store_name}"
         self._index = None
+        self._lock = threading.Lock()
 
     def open(self, upload: Dict) -> BinaryIO:
         path = self.directory / str(upload["_id"])
@@ -161,12 +162,14 @@ class FileSystemSource:
 
     def _with_extension(self) -> Dict[str, list]:
         """index of the files with an extension by their basename, built once on first use"""
-        if self._index is None:
-            self._index = {}
-            for name in os.listdir(self.directory):
-                if "." in name:
-                    self._index.setdefault(name.split(".", 1)[0], []).append(name)
-        return self._index
+        with self._lock:  # called from the worker threads, the index must be complete before others use it
+            if self._index is None:
+                index: Dict[str, list] = {}
+                for name in os.listdir(self.directory):
+                    if "." in name:
+                        index.setdefault(name.split(".", 1)[0], []).append(name)
+                self._index = index
+            return self._index
 
     def delete(self, upload_id: str) -> bool:
         raise NotImplementedError("removeblobs is only available for the GridFS source, remove the old files yourself")

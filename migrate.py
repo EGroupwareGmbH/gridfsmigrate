@@ -112,13 +112,19 @@ class GridFSSource:
         import gridfs
         self.gridfs = gridfs
         self.fs = gridfs.GridFSBucket(db, bucket_name=collection)
+        self.chunks = db[f"{collection}.chunks"]
         self.store = f"{self.kind}:{store_name}"
 
     def open(self, upload: Dict) -> BinaryIO:
         try:
-            return self.fs.open_download_stream(upload["_id"])
+            stream = self.fs.open_download_stream(upload["_id"])
         except self.gridfs.errors.NoFile:
             raise SourceFileMissing(f"no GridFS file {upload['_id']}")
+        # the file document can exist without its chunks (seen in production): that is a missing, not a failed file
+        if stream.length and self.chunks.find_one({"files_id": upload["_id"], "n": 0}, {"_id": 1}) is None:
+            stream.close()
+            raise SourceFileMissing(f"GridFS file {upload['_id']} has no chunks")
+        return stream
 
     def delete(self, upload_id: str) -> bool:
         """delete file and chunks, returns False if it was already gone"""

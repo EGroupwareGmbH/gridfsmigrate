@@ -17,6 +17,7 @@ Rocket.Chat instances (Rocket.Chat 8.x, MongoDB 8, S3 on IONOS). Branch `egroupw
 * **Streaming copies**: no whole file in memory; every copy is verified (size in the target against the bytes read)
 * **Resumable**: the log (`-l`, default `migrate_<database>.csv`) is written after every file, a repeated `dump` skips what is in the
   log and accepts an identical object that already exists in the target
+* **Missing data is reported, not fatal**: GridFS files without chunks (Lutop: 2619 of 5347 have no data in MongoDB any more) count as `missing`, truncated ones as `failed`
 * **Failures are reported as failures**: a failed copy is no longer logged as success, a document without a file in GridFS is reported
   as `missing` (and does not stop the run); the exit code is 1 if copies failed
 * **`dump --dry-run`** and `--limit N` for a first try, new command **`verify`**

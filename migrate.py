@@ -145,13 +145,28 @@ class FileSystemSource:
         if not self.directory.is_dir():
             raise ValueError(f"Source directory does not exist: {directory}")
         self.store = f"{self.kind}:{store_name}"
+        self._index = None
 
     def open(self, upload: Dict) -> BinaryIO:
         path = self.directory / str(upload["_id"])
         try:
             return open(path, "rb")
         except FileNotFoundError:
-            raise SourceFileMissing(f"no file {path}")
+            pass
+        # old Rocket.Chat versions stored some files with an extension: <_id>.<ext>, use it if it is unique
+        candidates = self._with_extension().get(str(upload["_id"]), [])
+        if len(candidates) == 1:
+            return open(self.directory / candidates[0], "rb")
+        raise SourceFileMissing(f"no file {path}" + (f" ({len(candidates)} candidates with extension)" if candidates else ""))
+
+    def _with_extension(self) -> Dict[str, list]:
+        """index of the files with an extension by their basename, built once on first use"""
+        if self._index is None:
+            self._index = {}
+            for name in os.listdir(self.directory):
+                if "." in name:
+                    self._index.setdefault(name.split(".", 1)[0], []).append(name)
+        return self._index
 
     def delete(self, upload_id: str) -> bool:
         raise NotImplementedError("removeblobs is only available for the GridFS source, remove the old files yourself")

@@ -236,6 +236,17 @@ def test_filesystem_source_reads_file_named_by_id(tmp_path):
         source.open({"_id": "nope"})
 
 
+def test_filesystem_source_falls_back_to_unique_file_with_extension(tmp_path):
+    (tmp_path / "old1.png").write_bytes(b"png")
+    (tmp_path / "old2.png").write_bytes(b"a")
+    (tmp_path / "old2.txt").write_bytes(b"b")
+    source = migrate.FileSystemSource(str(tmp_path))
+    with source.open({"_id": "old1"}) as stream:
+        assert stream.read() == b"png"
+    with pytest.raises(migrate.SourceFileMissing):  # ambiguous
+        source.open({"_id": "old2"})
+
+
 def test_filesystem_to_s3(db, s3, tmp_path):
     src_dir = tmp_path / "uploads"
     src_dir.mkdir()
